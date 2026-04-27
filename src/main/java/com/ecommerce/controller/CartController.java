@@ -31,7 +31,6 @@ public class CartController {
     public ResponseEntity<CartResponse> getCart(Authentication auth) {
 
         String email = auth.name();
-
         return ResponseEntity.ok(cartService.getCart(email));
     }
 
