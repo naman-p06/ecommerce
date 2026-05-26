@@ -11,8 +11,7 @@ import java.util.List;
 @Table(
         name = "orders",
         indexes = {
-                // Resume explicitly claims "strategic indexing on high-query columns
-                // (product_id, user_id, order_status)" — user_id and status live here
+
                 @Index(name = "idx_order_user",   columnList = "user_id"),
                 @Index(name = "idx_order_status", columnList = "status")
         }
@@ -22,14 +21,13 @@ public class Order {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "order_id", nullable = false)
-    private Long order_id;
+    private Long id;
 
-    // Changed from raw Long userId to proper FK relationship
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
+    @Column(nullable = false)
     private double totalAmount;
 
     @Enumerated(EnumType.STRING)
@@ -39,7 +37,6 @@ public class Order {
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
-    // Optional: link to the address used at time of checkout
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "address_id")
     private Address shippingAddress;

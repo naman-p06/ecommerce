@@ -4,10 +4,12 @@ import com.ecommerce.dto.CartItemResponse;
 import com.ecommerce.dto.CartResponse;
 import com.ecommerce.entity.Cart;
 import com.ecommerce.entity.CartItem;
+import com.ecommerce.entity.Product;
 import com.ecommerce.entity.User;
 import com.ecommerce.exception.CustomException;
 import com.ecommerce.repository.CartItemRepository;
 import com.ecommerce.repository.CartRepository;
+import com.ecommerce.repository.ProductRepository;
 import com.ecommerce.repository.UserRepository;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -17,10 +19,10 @@ import java.util.List;
 @Service
 @AllArgsConstructor
 public class CartService {
-                 private final CartRepository cartRepository;
+    private final CartRepository cartRepository;
     private final CartItemRepository cartItemRepository;
     private final UserRepository userRepository;
-
+    private final ProductRepository productRepository;
 
     public void addToCart(String email,Long ProductId,int quantity){
 
@@ -29,11 +31,12 @@ public class CartService {
                 .orElseThrow(() -> new CustomException("User not found"));
 
         Long userId = user.getId();
+        Product product=productRepository.findById(ProductId).orElseThrow(()->new CustomException("Product not found"));
 
         Cart cart=cartRepository.findByUserId(userId).orElseGet(
                 ()->{
                     Cart newCart=new Cart();
-                    newCart.setUserId(userId);
+                    newCart.setUser(user);
                     return cartRepository.save(newCart);
                 }
         );
@@ -45,9 +48,9 @@ public class CartService {
         }
         else{
             item=new CartItem();
-            item.setCartId(cart.getId());
+            item.setCart(cart);
             item.setQuantity(quantity);
-            item.setProductId(ProductId);
+            item.setProduct(product);
         }
         cartItemRepository.save(item);
     }
@@ -65,7 +68,7 @@ public class CartService {
 
         List<CartItemResponse> responseItems = items.stream().map(item -> {
             CartItemResponse res = new CartItemResponse();
-            res.setProductId(item.getProductId());
+            res.setProductId(item.getProduct().getId());
             res.setQuantity(item.getQuantity());
             return res;
         }).toList();

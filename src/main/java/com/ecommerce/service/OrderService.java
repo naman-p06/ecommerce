@@ -21,39 +21,44 @@ public class OrderService {
     private final CartItemRepository cartItemRepository;
     private final ProductRepository productRepository;
     private final PaymentService paymentService;
+    private final UserRepository userRepository;
+
 
     @Transactional
-    public Order createOrder(Long userId){
+    public Order createOrder(String email){
+
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new CustomException("User not found"));
+
+        Long userId=user.getId();
+
         Cart cart=cartRepository.findByUserId(userId).orElseThrow(()->new CustomException("cart not found"));
+
         List<CartItem> items=cartItemRepository.findByCartId(cart.getId());
         if(items.isEmpty()){
             throw new CustomException("cart is empty");
         }
 
         Order order=new Order();
-        order.setUserId(userId);
-        order.setCreatedAt(LocalDateTime.now());
+        order.setUser(user);
         order.setStatus(OrderStatus.CREATED);
 
         order=orderRepository.save(order);
         double totalAmount=0;
+
         for(CartItem item: items){
-            Product product=productRepository.findByIdWithLock(item.getProductId());
+            Product product=productRepository.findByIdWithLock(item.getProduct().getId());
             if(item.getQuantity()>product.getStock()){
                 throw new RuntimeException("Insufficient stock for Product");
             }
             OrderItem orderItem=new OrderItem();
             orderItem.setOrder(order);
-            orderItem.setProductId(item.getProductId());
+            orderItem.setProduct(item.getProduct());
             orderItem.setQuantity(item.getQuantity());
-            orderItem.setPrice(product.getPrice());
+            orderItem.setPriceAtPurchase(product.getPrice());
 
             orderItemRepository.save(orderItem);
-
-            // Step 4: Update total
             totalAmount += product.getPrice() * item.getQuantity();
-//            product.setStock(product.getStock()- item.getQuantity());
-//            productRepository.save(product);
         }
         order.setTotalAmount(totalAmount);
         orderRepository.save(order);
@@ -62,13 +67,16 @@ public class OrderService {
     }
 
     @Transactional
-    public void completeOrder(Order order,Long userId,boolean paymentSuccess){
+    public void completeOrder(Order order,String email,boolean paymentSuccess){
         if(paymentSuccess){
             order.setStatus(OrderStatus.SUCCESS);
-            Cart cart=cartRepository.findByUserId(userId).get();
+
+            User user=userRepository.findByEmail(email).orElseThrow(()->new CustomException("user not found"));
+            Cart cart=cartRepository.findByUserId(user.getId()).orElseThrow(() -> new CustomException("Cart not found"));
+
             List<CartItem> items=cartItemRepository.findByCartId(cart.getId());
             for(CartItem item:items){
-                Product product=productRepository.findByIdWithLock(item.getProductId());
+                Product product=productRepository.findByIdWithLock(item.getProduct().getId());
                 product.setStock(product.getStock()- item.getQuantity());
                 productRepository.save(product);
             }
@@ -81,13 +89,13 @@ public class OrderService {
         orderRepository.save(order);
     }
 
-    public String placeOrder(Long userId) {
+    public String placeOrder(String email) {
 
-        Order order = createOrder(userId);
+        Order order = createOrder(email);
 
         boolean paymentSuccess = paymentService.processPayment();
 
-        completeOrder(order, userId,paymentSuccess);
+        completeOrder(order, email ,paymentSuccess);
 
         return paymentSuccess ? "Order Success" : "Order Failed";
     }
