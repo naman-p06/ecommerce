@@ -11,10 +11,15 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 @NoArgsConstructor
 public class UserRequest {
-    @NotBlank
+
+    @NotBlank(message = "Name is required")
+    @Size(min=2,max=50,message = "Name must be between 2 and 50 characters")
     private String name;
+
+    @NotBlank
     @Email
     private String email;
-    @Size(min = 6)
+
+    @Size(min = 8,message = "Password must be at least 8 characters")
     private String password;
 }
