@@ -1,5 +1,6 @@
 package com.ecommerce.service;
 
+import com.ecommerce.dto.AuthResponse;
 import com.ecommerce.dto.LoginRequest;
 import com.ecommerce.dto.UserRequest;
 import com.ecommerce.dto.UserResponse;
@@ -9,6 +10,8 @@ import com.ecommerce.exception.UnauthorizedException;
 import com.ecommerce.repository.UserRepository;
 import com.ecommerce.util.JwtUtil;
 import lombok.RequiredArgsConstructor;
+
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -19,6 +22,10 @@ public class UserService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
+    private final RefreshTokenService  refreshTokenService;
+
+    @Value("${jwt.access-token.expiry-ms:3600000}")
+    private long accessTokenExpiryMs;
 
     public UserResponse register(UserRequest userRequest) {
 
@@ -42,7 +49,7 @@ public class UserService {
         return userResponse;
     }
 
-    public String login(LoginRequest loginRequest) {
+    public AuthResponse login(LoginRequest loginRequest) {
 
 
         User user = userRepository.findByEmail(loginRequest.getEmail())
@@ -53,6 +60,8 @@ public class UserService {
             throw new UnauthorizedException("Incorrect password");
         }
 
-        return jwtUtil.generateToken(loginRequest.getEmail(), user.getRole().name());
+        String accessToken= jwtUtil.generateAccessToken(loginRequest.getEmail(), user.getRole().name());
+        String refreshToken=refreshTokenService.createRefreshToken(user);
+        return new AuthResponse(accessToken, refreshToken, accessTokenExpiryMs / 1000);
     }
 }

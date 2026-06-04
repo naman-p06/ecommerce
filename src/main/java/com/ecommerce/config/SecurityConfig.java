@@ -1,7 +1,7 @@
 package com.ecommerce.config;
 
 import com.ecommerce.util.JwtFilter;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -15,11 +15,11 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 
 @Configuration
 @EnableWebSecurity
-@EnableMethodSecurity   // enables @PreAuthorize on controllers
+@EnableMethodSecurity
+@RequiredArgsConstructor  // FIX: was @Autowired — constructor injection is preferred
 public class SecurityConfig {
 
-    @Autowired
-    private JwtFilter jwtFilter;
+    private final JwtFilter jwtFilter;
 
     @Bean
     public PasswordEncoder passwordEncoder() {
@@ -30,23 +30,17 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         return http
                 .csrf(csrf -> csrf.disable())
-
-                // CRITICAL: tell Spring Security not to create/use HTTP sessions.
-                // Your API is stateless — authentication comes from the JWT on every request,
-                // not from a server-side session. Without this, Spring may try to redirect
-                // unauthenticated requests to a login page instead of returning 401.
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-
                 .authorizeHttpRequests(auth -> auth
-                        // Public endpoints — no token needed
-                        .requestMatchers("/api/users/register", "/api/users/login").permitAll()
-                        // Everything else requires a valid JWT
-                        // Fine-grained ADMIN vs USER control is handled by @PreAuthorize on each method
+                        .requestMatchers(
+                                "/api/users/register",
+                                "/api/users/login",
+                                "/api/auth/refresh",
+                                "/api/auth/logout"
+                        ).permitAll()
                         .anyRequest().authenticated()
                 )
-
-                // Run our JWT filter before Spring's default username/password filter
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();
     }

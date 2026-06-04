@@ -1,11 +1,13 @@
 package com.ecommerce.util;
 
+import com.ecommerce.service.TokenBlacklistService;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -20,35 +22,32 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 @Component
+@RequiredArgsConstructor
 public class JwtFilter extends OncePerRequestFilter {
 
-    @Autowired
-    private JwtUtil jwtUtil;
 
-    @Value("${jwt.secret}")
-    private String secret;
-
+    private final JwtUtil jwtUtil;
+    private final TokenBlacklistService blacklistService;
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain filterChain)
             throws ServletException, IOException {
-        // Fixed: original had duplicate "throws IOException, java.io.IOException" — same class, redundant
 
         String authHeader = request.getHeader("Authorization");
 
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             String token = authHeader.substring(7);
 
-            if (jwtUtil.validateToken(token)) {
-                Claims claims = Jwts.parserBuilder()
-                        .setSigningKey(secret.getBytes(StandardCharsets.UTF_8))
-                        .build()
-                        .parseClaimsJws(token)
-                        .getBody();
 
-                String email = claims.getSubject();
-                String role = claims.get("role", String.class);
+            if(blacklistService.isBlacklisted(token)){
+                filterChain.doFilter(request,response);
+                return;
+            }
+            if (jwtUtil.validateToken(token)) {
+
+                String email = jwtUtil.extractEmail(token);
+                String role = jwtUtil.extractRole(token);
 
                 List<SimpleGrantedAuthority> authorities =
                         List.of(new SimpleGrantedAuthority("ROLE_" + role));
@@ -56,8 +55,7 @@ public class JwtFilter extends OncePerRequestFilter {
                 UsernamePasswordAuthenticationToken authentication =
                         new UsernamePasswordAuthenticationToken(email, null, authorities);
 
-                // Attaches request metadata (IP, session ID) to the auth token.
-                // Best practice — helps Spring Security's audit/logging internals.
+
                 authentication.setDetails(
                         new WebAuthenticationDetailsSource().buildDetails(request));
 
