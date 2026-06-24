@@ -33,77 +33,81 @@ public class OrderService {
     private final AddressRepository addressRepository;
 
     @Transactional
-    public OrderResponse placeOrder(String email, OrderRequest request){
+    public OrderResponse placeOrder(String email, OrderRequest request) {
 
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
-        Long userId=user.getId();
+        Cart cart = cartRepository.findByUserId(user.getId())
+                .orElseThrow(() -> new BadRequestException("Cart not found"));
 
-        Cart cart=cartRepository.findByUserId(userId).orElseThrow(()->new BadRequestException("cart not found"));
-
-        List<CartItem> items=cartItemRepository.findByCartId(cart.getId());
-        if(items.isEmpty()){
-            throw new BadRequestException("cart is empty");
+        List<CartItem> items = cartItemRepository.findByCartId(cart.getId());
+        if (items.isEmpty()) {
+            throw new BadRequestException("Cart is empty");
         }
 
-        Address shippingAddress=resolveShippingAddress(user,request);
+        Address shippingAddress = resolveShippingAddress(user, request);
 
-        Order order=new Order();
-        order.setUser(user);
-        order.setStatus(OrderStatus.CREATED);
-        order.setShippingAddress(shippingAddress);
-        order=orderRepository.save(order);
-
-        double totalAmount=0;
-
-        for(CartItem item: items){
-            Product product=productRepository.findByIdWithLock(item.getProduct().getId());
-            if(item.getQuantity()>product.getStock()){
+        // ── Step 1: Validate stock for ALL items before touching anything ──
+        // Lock all products upfront to prevent phantom reads between validation
+        // and deduction. Also computes total so we don't loop twice.
+        double totalAmount = 0;
+        for (CartItem item : items) {
+            Product product = productRepository.findByIdWithLock(item.getProduct().getId());
+            if (item.getQuantity() > product.getStock()) {
                 throw new BadRequestException(
                         "Insufficient stock for '" + product.getName() +
                                 "'. Available: " + product.getStock() +
                                 ", Requested: " + item.getQuantity()
                 );
             }
-            OrderItem orderItem=new OrderItem();
+            totalAmount += product.getPrice() * item.getQuantity();
+        }
+
+        // ── Step 2: Create order record ────────────────────────────────────
+        Order order = new Order();
+        order.setUser(user);
+        order.setStatus(OrderStatus.CREATED);
+        order.setShippingAddress(shippingAddress);
+        order.setTotalAmount(totalAmount);
+        order = orderRepository.save(order);
+
+        // ── Step 3: Process payment BEFORE touching stock ──────────────────
+        // If payment fails here, no stock was deducted — nothing to roll back.
+        PaymentService.PaymentResult paymentResult = paymentService.processPayment(totalAmount);
+
+        if (!paymentResult.success()) {
+            order.setStatus(OrderStatus.FAILED);
+            orderRepository.save(order);
+            log.warn("Order {} failed for user {}. Reason: {}", order.getId(), email, paymentResult.message());
+            return toResponse(order);
+        }
+
+        // ── Step 4: Payment succeeded — now deduct stock and create items ──
+        // At this point we're committed. Any exception here rolls back the
+        // entire @Transactional, including the order save above.
+        for (CartItem item : items) {
+            Product product = productRepository.findByIdWithLock(item.getProduct().getId());
+
+            OrderItem orderItem = new OrderItem();
             orderItem.setOrder(order);
             orderItem.setProduct(item.getProduct());
             orderItem.setQuantity(item.getQuantity());
             orderItem.setPriceAtPurchase(product.getPrice());
-
             orderItemRepository.save(orderItem);
 
             product.setStock(product.getStock() - item.getQuantity());
             productRepository.save(product);
 
             order.getItems().add(orderItem);
-            totalAmount += product.getPrice() * item.getQuantity();
-        }
-        order.setTotalAmount(totalAmount);
-
-        PaymentService.PaymentResult paymentResult = paymentService.processPayment(totalAmount);
-
-        if (paymentResult.success()) {
-            order.setStatus(OrderStatus.CONFIRMED);
-            cart.getItems().clear();
-            cartRepository.save(cart);
-
-            log.info("Order {} placed successfully for user {}", order.getId(), email);
-        } else {
-            order.setStatus(OrderStatus.FAILED);
-
-            // Rollback stock — refund what was deducted
-            for (CartItem cartItem : items) {
-                Product product = productRepository
-                        .findByIdWithLock(cartItem.getProduct().getId());
-                product.setStock(product.getStock() + cartItem.getQuantity());
-                productRepository.save(product);
-            }
-            log.warn("Order {} failed for user {}. Reason: {}", order.getId(), email, paymentResult.message());
         }
 
+        order.setStatus(OrderStatus.CONFIRMED);
+        cart.getItems().clear();
+        cartRepository.save(cart);
         orderRepository.save(order);
+
+        log.info("Order {} placed successfully for user {}", order.getId(), email);
         return toResponse(order);
     }
 

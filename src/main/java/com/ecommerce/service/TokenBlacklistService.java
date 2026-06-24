@@ -3,11 +3,12 @@ package com.ecommerce.service;
 import com.ecommerce.util.JwtUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Date;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 @RequiredArgsConstructor
@@ -15,41 +16,26 @@ import java.util.concurrent.ConcurrentHashMap;
 public class TokenBlacklistService {
 
     private final JwtUtil jwtUtil;
+    private final StringRedisTemplate redisTemplate;
 
-    // ConcurrentHashMap — thread-safe without locking the whole map.
-    // Key = raw JWT string, Value = expiry timestamp (ms since epoch)
-    // We store expiry so we can clean up tokens that have already expired naturally.
-    private final ConcurrentHashMap<String, Long> blacklist = new ConcurrentHashMap<>();
+    private static final String PREFIX = "blacklist:";
 
     public void blacklist(String token) {
         try {
             Date expiry = jwtUtil.extractExpiration(token);
-            blacklist.put(token, expiry.getTime());
-            log.info("Token blacklisted, expires at {}", expiry);
+            long ttlSeconds = Duration.between(Instant.now(), expiry.toInstant()).getSeconds();
+
+            if (ttlSeconds > 0) {
+                redisTemplate.opsForValue().set(PREFIX + token, "1", Duration.ofSeconds(ttlSeconds));
+                log.info("Token blacklisted in Redis, TTL={}s", ttlSeconds);
+            }
+            // if ttlSeconds <= 0, token is already expired — no point storing it
         } catch (Exception e) {
-            // If token is already invalid/expired, no need to blacklist it
-            log.warn("Attempted to blacklist an invalid token: {}", e.getMessage());
+            log.warn("Failed to blacklist token: {}", e.getMessage());
         }
     }
 
-    // Called in JwtFilter on every request
     public boolean isBlacklisted(String token) {
-        return blacklist.containsKey(token);
-    }
-
-    // Runs every 30 minutes — removes tokens whose expiry has already passed.
-    // Without this, the map grows forever because logout tokens are never removed.
-    // Once a token is expired it can't be used anyway, so storing it is pointless.
-    @Scheduled(fixedRateString = "${jwt.blacklist.cleanup-ms:1800000}")
-    public void cleanupExpiredTokens() {
-        long now = System.currentTimeMillis();
-        int before = blacklist.size();
-
-        blacklist.entrySet().removeIf(entry -> entry.getValue() < now);
-
-        int removed = before - blacklist.size();
-        if (removed > 0) {
-            log.info("Blacklist cleanup: removed {} expired tokens", removed);
-        }
+        return Boolean.TRUE.equals(redisTemplate.hasKey(PREFIX + token));
     }
 }

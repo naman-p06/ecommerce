@@ -30,7 +30,6 @@ public class UserController {
     @PostMapping("/login")
     public ResponseEntity<ApiResponse<AuthResponse>> login(
             @Valid @RequestBody LoginRequest loginRequest) {
-        // FIX: was returning plain String — now returns AuthResponse with both tokens
         return ResponseEntity.ok(
                 ApiResponse.ok("Login successful", userService.login(loginRequest)));
     }
